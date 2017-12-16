@@ -1,0 +1,156 @@
+The code generator presented here accepts as input a sequence of stencil
+statements that are expressed in a restricted subset of C consistent with the
+grammar described in figure \ref{fig:start-grammar}. The input to the code
+generator is a full stencil code in a .cu file, with the regions that the user
+wants to reorder annotated with \texttt{\#pragma begin stencil$\ldots$} and a
+matching \texttt{\#pragma end}. The parser is simplified and does not perform
+any syntactic verification, so when creating a new benchmark, it is the user's
+responsibility to ensure that the syntax adheres to the specifications for the
+code generator to work correctly. 
+
+In the grammar of figure \ref{fig:start-grammar}, a $\mathit{BaseExpr}$ in a
+statement represents an accessed storage location, and is identified by a
+\textit{label}. A crucial part of the reordering framework is to identify the
+\textit{same} $\mathit{BaseExpr}$. This is done by checking the equivalence of
+the labels that are assigned to any two $\mathit{BaseExpr}$. This is
+complicated by the fact that post unrolling, one has to guarantee that
+\texttt{A[i+1+1]} will be assigned the same label as \texttt{A[i+2]}. In
+general, the array index expressions can be rewritten in multiple, albeit
+equivalent ways -- \texttt{A[i+j]} is the same as \texttt{A[j+i]},
+\texttt{A[i+1+j]} is the same as \texttt{A[i+j+1]}, and so on. To ensure that
+the semantically equivalent $\mathit{BaseExpr}$ are assigned the same label,
+the code generator has a mechanism that ``canonicalizes'' the accesses, so that
+semantically equivalent accesses have the same pattern. We define an array index expression
+to comprise of an iterator-access component (e.g., \texttt{(i+j)} in access
+\texttt{A[i+j+2]}), and an integer offset component (e.g., 2 in accesses
+\texttt{A[i+j+1+1]} and \texttt{A[i+j+2]}). Within the code generator, this
+logic is encoded in the function \textit{array\_access\_info ()}, and it works
+in two steps: 
+\begin{compactenum}
+\item it separates out iterator-access component and the integer offset from an index expression
+\item it canonicalizes both the extracted components. For the iterator-access
+component, this involves identifying the presence of an operator in the
+iterator-access, and then exploiting the properties of the operator to align
+the iterators in lexicographical order. For example, \texttt{(j-i)} will be
+converted to \texttt{(j+(-i))}, and then \texttt{(j \textit{op} i)} will be
+rearranged as \texttt{(i \textit{op} j)}, if \texttt{i} precedes \texttt{j} in
+lexicographical ordering, and \textit{op} is commutative, like +,*. For the
+offset component, it identifies the operators involved, and performs the
+mathematical operation to reduce the offset component to a single integer
+value.
+\end{compactenum}
+The canonicalization part is non-trivial, and currently primitive in
+implementation in the code generator. We currently restrict the number of
+operators in the iterator-access component to 1. For example, we allow
+A[k+1+1][2*j+2][i] since we can canonicalize each of the array index
+expressions, but not something as complex as A[(k+2)*(k+3)][j][i], since this
+access will result in an iterator-offset component (k*k+5k) where there are two
+arithmetic operations involved.
+ 
+
+In summary, We impose the following restrictions on the statements:
+\begin{itemize}
+\item The statements must not modify the iterators (e.g., i, j and k in listing
+\ref{listing:new-eg}) in any way.  
+\item The statements can only have mathematical functions like sine, sqrt,
+cosine, etc. on the RHS, that are side-effect free.  
+\item The accessed locations in the stencil statements are either scalars or
+array elements. The array index expressions can only comprise the loop
+iterators, integers or simple arithmetic operations between them (+,-,*,/).
+We allow only \textit{one} arithmetic operation in the iterator-access component
+of the array index expressions, and the offset component must be an integer.
+\end{itemize} 
+
+Once the parsing is complete, the code
+generator lowers the input further to sub-statements consistent with the
+grammar of figure \ref{fig:lower-grammar}. Informally, this lowering is like
+GIMPLE IR of GCC \cite{gcc} with accumulations. 
+
+
+\begin{figure}[t!]    
+\footnotesize
+  \begin{align}
+    \hline
+    \langle\text{Program}\rangle ::=& \;  \langle\text{StmtList}\rangle {\color{tablecolor!60}\texttt{;}} \nonumber \\
+    \langle\text{StmtList}\rangle ::=& \; \langle\text{Stmt}\rangle \langle\text{StmtList}\rangle \; | \; \langle\text{Stmt}\rangle \nonumber \\
+    \langle\text{Stmt}\rangle ::=& \; \langle\text{BaseExpr}\rangle \langle\text{AssignOp}\rangle \langle\text{Expr}\rangle {\color{tablecolor!60}\texttt{;}} \nonumber \\
+    \langle\text{Expr}\rangle ::=& \; \text{Side-effect-free expression of~} \langle\text{BaseExpr}\rangle \nonumber \\
+    \langle\text{BaseExpr}\rangle ::=& \; \langle\text{ID}\rangle \; | \; \langle\text{ArrayExpr}\rangle \nonumber \\
+    \langle\text{ArrayExpr}\rangle ::=& \; \langle\text{ID}\rangle \langle\text{ArrayDims}\rangle \nonumber \\
+    \langle\text{ArrayDims}\rangle ::=& \; {\color{tablecolor!60}\texttt{[}}\langle\text{AccessExpr}\rangle {\color{tablecolor!60}\texttt{]}} \langle\text{ArrayDims}\rangle \; | \; {\color{tablecolor!60}\texttt{[}}\langle\text{AccessExpr}\rangle {\color{tablecolor!60}\texttt{]}} \nonumber \\
+    \langle\text{AccessExpr}\rangle ::=& \; \text{Side-effect-free expression of~} \langle\text{AccessElement}\rangle \text{ with restrictions described in text}\nonumber \\
+	\langle\text{AccessElement}\rangle ::=& \; \langle\text{Iterator}\rangle \; | \; \langle\text{Const}\rangle \nonumber \\
+    \langle\text{AssignOp}\rangle ::=& \; {\color{tablecolor!60}\texttt{=}} \; | \; {\color{tablecolor!60}\texttt{+=}} \; | \; {\color{tablecolor!60}\texttt{-=}} \; | \; {\color{tablecolor!60}\texttt{*=}} \; | \; \ldots \nonumber  \\
+    \langle\text{DataType}\rangle ::=& \; {\color{tablecolor!60}\texttt{double}} \; | \; {\color{tablecolor!60}\texttt{float}} \; | \; {\color{tablecolor!60}\texttt{int}} \; | \; {\color{tablecolor!60}\texttt{bool}} \; | \; \ldots \nonumber  \\
+    \hline \nonumber
+  \end{align}
+\vspace*{-0.6cm}
+  \caption{Grammar for valid input statements to the code generator}
+\label{fig:start-grammar}
+\end{figure}
+
+
+\begin{figure}[t!]
+  \footnotesize
+  \begin{align}
+    \hline
+    \langle\text{CodeBody}\rangle ::=& \;  \langle\text{StmtList$_l$}\rangle {\color{tablecolor!60}\texttt{;}} \nonumber \\
+    \langle\text{StmtList$_l$}\rangle ::=& \; \langle\text{Assignment$_l$}\rangle {\color{tablecolor!60}\texttt{;}} \langle\text{StmtList$_l$}\rangle \; | \; \langle\text{Assignment$_l$}\rangle \nonumber \\
+    \langle\text{Assignment$_l$}\rangle ::=& \; \langle\text{BaseExpr}\rangle \langle\text{AssignOp}\rangle \langle\text{Expr$_l$}\rangle \nonumber \\
+    \langle\text{Expr$_l$}\rangle ::=& \; \langle\text{BaseExpr}\rangle \langle\text{BinaryOp$_l$}\rangle \langle\text{BaseExpr}\rangle \; | \; \langle\text{BaseExpr}\rangle \nonumber \\
+    \langle\text{BinaryOp$_l$}\rangle ::=& \; {\color{tablecolor!60}\texttt{+}} \; | \; {\color{tablecolor!60}\texttt{-}} \; | \; {\color{tablecolor!60}\texttt{*}} \; | \; {\color{tablecolor!60}\texttt{/}} \; | \; {\color{tablecolor!60}\texttt{|}} \; | \; {\color{tablecolor!60}\texttt{\&}} \; | \; \ldots \nonumber  \\
+    \hline \nonumber
+  \end{align}
+   \vspace*{-0.6cm}
+  \caption{Grammar for the lowered 3-address IR for instruction reordering}
+\label{fig:lower-grammar}
+\end{figure}
+
+
+
+\section{Creating an example}
+Listing \ref{listing:new-eg} shows a snippet of a cuda input code that can be
+passed as an input to the reordering framework. The computation in lines 5-7 is
+affine, and in compliance with the restrictions we placed on the input grammar.
+Note the pragmas in line 4 and 8 that surround the statement -- these demarcate
+the region that the code generator can parse and optimize. Additionally, the
+pragma supplies the unrolling factor along each dimension. Given an input file
+with several such pragma-demarcated regions, the steps in optimizing the code
+will be: 
+
+\begin{enumerate} 
+\item A script will remove the statements between all the pragma, and put them
+into separate \texttt{.idsl} files, each named based on the stencil name (e.g.,
+\texttt{stencil1.idsl} for the example in listing \ref{listing:new-eg}).
+Therefore, each stencil name must be distinct.
+\item From the pool of \texttt{stencilname.idsl} files generated, the code
+generator will pick one at a time, parse it, optimize it, and write the results
+back in \texttt{stencilname.cu}.  
+\item A script will then read the contents from \texttt{stencilname.cu}, and
+replace the original statements demarcated by \texttt{\#pragma begin
+stencilname $\ldots$ \#pragma end stencilname} with the optimized code. 
+\end{enumerate} 
+The changes are made in-place to the input cuda file.
+Please look at the benchmarks in the examples folder to learn more about how to use this
+code generator for your applications. 
+ 
+\begin{figure}[t!]
+\vspace*{-1em}
+%\vspace*{-15pt}
+\begin{lstlisting}[escapechar=@,caption={The input representation with pragmas},label={listing:new-eg}]
+  for (k=1; k<=N-2; k++) {
+       for (j=1; j<=N-2; j++) {
+           for (i=1; i<=N-2; i++) {
+#pragma begin stencil1 unroll k=4,j=1,i=1
+                   out[k][j][i] = $a$*(in[k+1][j][i]) + $b$*(in[k][j-1][i] +
+                              in[k][j][i-1] + in[k][j][i] + in[k][j][i+1] +
+                                  in[k][j+1][i]) + $c$*(in[k-1][j][i]);
+#pragma end stencil1
+           }
+       }
+  }
+\end{lstlisting}
+\end{figure}
+
+
+
