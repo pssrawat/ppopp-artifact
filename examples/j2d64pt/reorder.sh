@@ -21,7 +21,7 @@ sed -i '/#pragma begin '"$name"'/r '"$name"'.cu' reordered-a.cu
 sed -i '/#pragma begin '"$name"'/r '"$name"'.cu' reordered-b.cu
 ../../test $name.idsl --out-file $name.cu --unroll $uf --heuristic 1 --distribute-rhs true --split false 
 sed -i '/#pragma begin '"$name"'/r '"$name"'.cu' reordered-c.cu
-sed -i '/#pragma begin '"$name"'/r 'orig-"$name"'.cu' reordered-d.cu
+sed -i '/#pragma begin '"$name"'/r 'orig_"$name"'.cu' reordered-d.cu
 ../../test $name.idsl --out-file $name.cu --unroll $uf --heuristic 1 --distribute-rhs false --split false
 sed -i '/#pragma begin '"$name"'/r '"$name"'.cu' reordered-e.cu
 done < stencilnames
