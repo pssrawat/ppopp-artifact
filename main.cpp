@@ -83,6 +83,10 @@ int main (int argc, char **argv) {
 					unroll_decls[dimension] = val;
 					tmp = tmp.substr(pos+1);		
 				}
+                                size_t vpos = tmp.find ("=");
+                                string dimension = tmp.substr(0,vpos);
+                                int val = atoi(tmp.substr(vpos+1).c_str());
+                                unroll_decls[dimension] = val;
 			}
 		}
 	}
