@@ -1,0 +1,4 @@
+/y.tab.*
+*.o
+test
+lex.yy.c
